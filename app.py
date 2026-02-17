@@ -698,9 +698,7 @@ DAY_BORDER = Border(top=THICK)
 CELL_BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
 def build_workbook(staff_list, a, breaks, gaps, dates, slots, hols, hours_map2, week_start, week_num: int):
-    wb = Workbook()
-    wb.remove(wb.active)
-    staff_names = [s.name for s in staff_list]
+        staff_names = [s.name for s in staff_list]
 
     ws = wb.create_sheet(f"Week{week_num}_MasterTimeline")
     ws.append(["Date","Time"] + staff_names)
@@ -770,7 +768,7 @@ def build_workbook(staff_list, a, breaks, gaps, dates, slots, hols, hours_map2, 
     for d,t,task,issue in gaps:
         ws3.append([d.isoformat(), "" if t is None else t.strftime("%H:%M"), task, issue])
 
-    return wb
+    
 
 # ---------------- Streamlit UI ----------------
 st.set_page_config(page_title="Rota Generator v11 Structured Priority", layout="wide")
@@ -805,7 +803,7 @@ if uploaded:
                 )
                 wb_w = build_workbook(staff_list, a, breaks, gaps, dates, slots, hols, hours_map2, wk_start, w+1)
                 for sh in wb_w.worksheets:
-                    out_wb._add_sheet(sh)
+                    # removed invalid sheet merge
 
             bio = io.BytesIO()
             out_wb.save(bio)
