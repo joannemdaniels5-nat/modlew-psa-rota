@@ -1408,7 +1408,7 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
                         hk = holiday_kind(nm, d, tpl.hols)
                         if hk:
                             val = hk
-                        elif not is_working(hours_map, wk_start, d, t, nm):
+                        elif not is_working(hours_map, d, t, nm):
                             val = ""
                         elif nm in breaks.get((d, t), set()):
                             val = "Break"
