@@ -1405,7 +1405,7 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
                 for site, ws_site2 in site_sheets.items():
                     row = [date_label, time_label]
                     for nm in staff_names:
-                        hk = holiday_kind(nm, d, hols)
+                        hk = holiday_kind(nm, d, tpl.hols)
                         if hk:
                             val = hk
                         elif not is_working(hmap, week_start, d, t, nm):
