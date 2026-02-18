@@ -74,6 +74,11 @@ ROLE_COLORS = {
     "": "DDDDDD",
 }
 
+def _fill_for(value: str) -> PatternFill:
+    return PatternFill('solid', fgColor=ROLE_COLORS.get(value, 'FFFFFF'))
+
+
+
 def timeslots() -> List[time]:
     cur = datetime(2000, 1, 1, DAY_START.hour, DAY_START.minute)
     end = datetime(2000, 1, 1, DAY_END.hour, DAY_END.minute)
@@ -1011,7 +1016,10 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
             _add_colour_rules(ws, rng, start)
             for rr in range(2, ws.max_row+1):
                 for cc in range(3, ws.max_column+1):
-                    ws.cell(rr, cc).alignment = Alignment(wrap_text=True, vertical="top")
+                    cell = ws.cell(rr, cc)
+                    v = str(cell.value or "")
+                    cell.fill = _fill_for(v)
+                    cell.alignment = Alignment(wrap_text=True, vertical="top")
             _apply_day_borders(ws)
 
         # Coverage by slot by site (names)
@@ -1046,6 +1054,31 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
                 row.append(", ".join([nm for nm in all_staff if a.get((d,t,nm))=="Email_Box"]))
                 row.append(", ".join([nm for nm in all_staff if a.get((d,t,nm), "") in ("Misc_Tasks","Unassigned")]))
                 ws_cov.append(row)
+
+
+        # Colour coverage columns by meaning (static fill)
+        col_map = {
+            "FD_": ROLE_COLORS.get("FrontDesk_SLGP", "FFF2CC"),
+            "Triage_": ROLE_COLORS.get("Triage_Admin_SLGP", "D9EAD3"),
+            "Phones": ROLE_COLORS.get("Phones", "C9DAF8"),
+            "Bookings": ROLE_COLORS.get("Bookings", "FCE5CD"),
+            "EMIS": ROLE_COLORS.get("EMIS", "EAD1DC"),
+            "Docman": ROLE_COLORS.get("Docman", "D0E0E3"),
+            "Awaiting": ROLE_COLORS.get("Awaiting_PSA_Admin", "D0E0E3"),
+            "Email": ROLE_COLORS.get("Email_Box", "CFE2F3"),
+            "Misc": ROLE_COLORS.get("Misc_Tasks", "FFFFFF"),
+        }
+        for cc in range(3, ws_cov.max_column+1):
+            hdr = str(ws_cov.cell(1, cc).value or "")
+            hexcol = None
+            for k, v in col_map.items():
+                if hdr.startswith(k) or hdr == k:
+                    hexcol = v
+                    break
+            if hexcol:
+                f = PatternFill("solid", fgColor=hexcol)
+                for rr in range(2, ws_cov.max_row+1):
+                    ws_cov.cell(rr, cc).fill = f
 
         _apply_day_borders(ws_cov)
         for rr in range(2, ws_cov.max_row+1):

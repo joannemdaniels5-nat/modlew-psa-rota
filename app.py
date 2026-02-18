@@ -3,7 +3,7 @@ import io
 from datetime import date
 import streamlit as st
 
-from rota_engine_fixed import read_template, build_workbook, ensure_monday
+from rota_engine import read_template, build_workbook, ensure_monday
 
 st.set_page_config(page_title="Rota Generator", layout="wide")
 
