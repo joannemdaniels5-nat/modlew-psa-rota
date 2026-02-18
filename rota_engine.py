@@ -533,9 +533,9 @@ def block_limits(task: str) -> Tuple[int,int]:
     # fixed tasks not here
     return MIN_DEFAULT, MAX_DEFAULT
 
-def schedule_week(tpl: TemplateData, week_start: date):
+def schedule_week(tpl: TemplateData, wk_start: date):
     slots = timeslots()
-    dates = [week_start + timedelta(days=i) for i in range(5)]
+    dates = [wk_start + timedelta(days=i) for i in range(5)]
 
     # apply swaps
     hours_map = apply_swaps(tpl.hours_map, tpl.swaps, dates)
@@ -1408,7 +1408,7 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
                         hk = holiday_kind(nm, d, tpl.hols)
                         if hk:
                             val = hk
-                        elif not is_working(hours_map, week_start, d, t, nm):
+                        elif not is_working(hours_map, wk_start, d, t, nm):
                             val = ""
                         elif nm in breaks.get((d, t), set()):
                             val = "Break"
