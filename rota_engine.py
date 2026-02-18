@@ -1359,3 +1359,111 @@ def add_progress_bars(ws, col_letter, max_value):
                        end_type='num', end_value=max_value,
                        color="63C384")
     ws.conditional_formatting.add(f"{col_letter}2:{col_letter}{ws.max_row}", rule)
+
+# ===========================
+# Timeline Conditional Formatting (for formula-linked site sheets)
+# ===========================
+from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles import PatternFill
+
+def apply_timeline_conditional_formatting(ws, start_row: int, start_col: int, end_row: int, end_col: int, day_border_cols=None):
+    """Apply fill colours based on cell text so formula-linked timelines still colour correctly."""
+    # Same palette as master (adjust if your ROLE_COLORS differs)
+    role_colors = {
+        "FrontDesk": "FFF2CC",
+        "Triage_Admin": "D9EAD3",
+        "Email_Box": "CFE2F3",
+        "Phones": "C9DAF8",
+        "Bookings": "FCE5CD",
+        "Emis_Tasks": "EAD1DC",
+        "EMIS": "EAD1DC",
+        "Docman_Tasks": "D0E0E3",
+        "Docman": "D0E0E3",
+        "Awaiting_PSA_Admin": "D0E0E3",
+        "Misc_Tasks": "EFEFEF",
+        "Break": "CCE5FF",
+        "Holiday": "FFF2CC",
+        "Sick": "F4CCCC",
+        "Bank Holiday": "FFE599",
+        "": "FFFFFF",
+    }
+
+    data_range = f"{ws.cell(start_row, start_col).coordinate}:{ws.cell(end_row, end_col).coordinate}"
+
+    # Clear existing CF on this range is not straightforward; we just add rules.
+    for key, hexcol in role_colors.items():
+        if key == "":
+            continue
+        fill = PatternFill("solid", fgColor=hexcol)
+        # Use SEARCH to match substring regardless of exact role suffixes
+        # e.g. FrontDesk_SLGP, FrontDesk_JEN etc.
+        formula = f'ISNUMBER(SEARCH("{key}",{ws.cell(start_row, start_col).coordinate}))'
+        # FormulaRule applies per-cell, but formula references should be relative.
+        # We'll anchor column/row with no $ so Excel adjusts for each cell.
+        # Build formula using top-left of range then rely on Excel adjustment.
+        tl = ws.cell(start_row, start_col).coordinate
+        formula = f'ISNUMBER(SEARCH("{key}",{tl}))'
+        ws.conditional_formatting.add(data_range, FormulaRule(formula=[formula], fill=fill))
+
+    # Optional: set blank/non-working to light grey via formula for empty string
+    blank_fill = PatternFill("solid", fgColor="DDDDDD")
+    tl = ws.cell(start_row, start_col).coordinate
+    ws.conditional_formatting.add(data_range, FormulaRule(formula=[f'{tl}=""'], fill=blank_fill))
+
+# ===========================
+# Fragment Smoothing (No 30-min task changes)
+# ===========================
+def smooth_30min_fragments(assignments, slots, week_start, staff_names, fixed_prefixes=("FrontDesk_", "Triage_Admin_")):
+    """Merge any single-slot (30-min) task blocks into the previous task for that staff/day.
+    assignments: dict[(date,time,name)] -> task
+    """
+    # Build per staff/day timeline
+    dates = [week_start + timedelta(days=i) for i in range(5)]
+    for d in dates:
+        for nm in staff_names:
+            seq = [assignments.get((d, t, nm), None) for t in slots]
+            # Identify blocks
+            i = 0
+            while i < len(slots):
+                task = seq[i]
+                if task is None:
+                    i += 1
+                    continue
+                j = i + 1
+                while j < len(slots) and seq[j] == task:
+                    j += 1
+                block_len = j - i
+                # If exactly 1 slot and not fixed, merge into previous task if exists and not None
+                if block_len == 1:
+                    if not any(str(task).startswith(p) for p in fixed_prefixes):
+                        prev_idx = i - 1
+                        if prev_idx >= 0 and seq[prev_idx] is not None:
+                            prev_task = seq[prev_idx]
+                            # extend previous task into this slot
+                            t = slots[i]
+                            assignments[(d, t, nm)] = prev_task
+                            seq[i] = prev_task
+                        else:
+                            # If no previous, try merge into next (rare shift start 30 mins)
+                            next_idx = j
+                            if next_idx < len(slots) and seq[next_idx] is not None and not any(str(seq[next_idx]).startswith(p) for p in fixed_prefixes):
+                                next_task = seq[next_idx]
+                                t = slots[i]
+                                assignments[(d, t, nm)] = next_task
+                                seq[i] = next_task
+                i = j
+    return assignments
+
+from openpyxl.styles import Border, Side
+
+def apply_vertical_day_borders(ws, day_end_cols):
+    thick = Side(style="thick")
+    for col in day_end_cols:
+        for r in range(1, ws.max_row + 1):
+            cell = ws.cell(r, col)
+            existing = cell.border
+            cell.border = Border(
+                left=existing.left, right=thick, top=existing.top, bottom=existing.bottom,
+                diagonal=existing.diagonal, diagonal_direction=existing.diagonal_direction,
+                outline=existing.outline, vertical=existing.vertical, horizontal=existing.horizontal
+            )
