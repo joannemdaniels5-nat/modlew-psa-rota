@@ -1003,24 +1003,71 @@ THIN = Side(style="thin")
 DAY_BORDER = Border(top=THICK)
 CELL_BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
+
 def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workbook:
+    """
+    Creates an Excel workbook where Week*_MasterTimeline is the single source of truth.
+    Site timelines are formula-linked to the Master so manual edits propagate.
+    Adds:
+      - Site timelines (SLGP/JEN/BGS)
+      - Coverage_By_Slot (names per task per slot)
+      - Coverage_Dashboard (at-a-glance metrics + target progress bars)
+      - Clear day separators + wider columns + consistent colour fills
+    """
+    from openpyxl.utils import get_column_letter
+    from openpyxl.formatting.rule import DataBarRule
+    from openpyxl.styles import Border
+
     wb = Workbook()
     wb.remove(wb.active)
 
     staff_names = [s.name for s in tpl.staff]
-    slots = timeslots()
+    staff_by_name = {s.name: s for s in tpl.staff}
+
+    # Column widths
+    DATE_W, TIME_W, STAFF_W = 14, 8, 18
+
+    def is_day_start(val_time: str) -> bool:
+        return val_time == DAY_START.strftime("%H:%M")
+
+    def is_day_end(val_time: str) -> bool:
+        # last slot begins at 18:00 when day ends 18:30
+        return val_time == "18:00"
+
+    def merged_border(base: Border, top=False, bottom=False) -> Border:
+        return Border(
+            left=base.left, right=base.right,
+            top=THICK if top else base.top,
+            bottom=THICK if bottom else base.bottom,
+        )
+
+    # Tasks for coverage sheets/dashboard
+    COVER_TASKS = [
+        "FrontDesk_SLGP","FrontDesk_JEN","FrontDesk_BGS",
+        "Triage_Admin_SLGP","Triage_Admin_JEN",
+        "Email_Box","Awaiting_PSA_Admin","Phones",
+        "Bookings","EMIS","Docman","Misc_Tasks"
+    ]
 
     for w in range(weeks):
         wk_start = start_monday + timedelta(days=7*w)
         a, breaks, gaps, dates, slots, hours_map = schedule_week(tpl, wk_start)
 
-        # Master
+        # ----------------------------
+        # 1) Master Timeline
+        # ----------------------------
         ws = wb.create_sheet(f"Week{w+1}_MasterTimeline")
         ws.append(["Date","Time"] + staff_names)
         for c in ws[1]:
             c.font = Font(bold=True)
             c.alignment = Alignment(horizontal="center", vertical="center")
         ws.freeze_panes = "C2"
+
+        # Set widths
+        ws.column_dimensions["A"].width = DATE_W
+        ws.column_dimensions["B"].width = TIME_W
+        for i in range(len(staff_names)):
+            ws.column_dimensions[get_column_letter(3+i)].width = STAFF_W
 
         for d in dates:
             for t in slots:
@@ -1038,20 +1085,252 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
                     row.append(val)
                 ws.append(row)
 
-        # Style
+        # Style Master (fills + day borders)
         for rr in range(2, ws.max_row+1):
-            if ws.cell(rr,2).value == "08:00":
-                for cc in range(1, ws.max_column+1):
-                    ws.cell(rr,cc).border = DAY_BORDER
+            tval = str(ws.cell(rr,2).value or "")
+            day_start = is_day_start(tval)
+            day_end = is_day_end(tval)
             for cc in range(1, ws.max_column+1):
                 cell = ws.cell(rr,cc)
-                cell.border = CELL_BORDER
+                b = CELL_BORDER
+                if day_start:
+                    b = merged_border(b, top=True)
+                if day_end:
+                    b = merged_border(b, bottom=True)
+                cell.border = b
+
                 if cc >= 3:
                     val = str(cell.value or "")
                     cell.fill = fill_for(val)
                     cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-        # Notes/gaps
+        # ----------------------------
+        # 2) Site Timelines (formula-linked)
+        # ----------------------------
+        def make_site_timeline(site: str):
+            site_staff = [nm for nm in staff_names if str(staff_by_name[nm].home).upper() == site]
+            if not site_staff:
+                return
+            ws_site = wb.create_sheet(f"Week{w+1}_{site}_Timeline")
+            ws_site.append(["Date","Time"] + site_staff)
+            for c in ws_site[1]:
+                c.font = Font(bold=True)
+                c.alignment = Alignment(horizontal="center", vertical="center")
+            ws_site.freeze_panes = "C2"
+
+            ws_site.column_dimensions["A"].width = DATE_W
+            ws_site.column_dimensions["B"].width = TIME_W
+            for i in range(len(site_staff)):
+                ws_site.column_dimensions[get_column_letter(3+i)].width = STAFF_W
+
+            master_col = {nm: 3 + staff_names.index(nm) for nm in site_staff}
+
+            for rr in range(2, ws.max_row+1):
+                date_val = ws.cell(rr,1).value
+                time_val = ws.cell(rr,2).value
+                ws_site.append([date_val, time_val] + [""]*len(site_staff))
+                site_rr = ws_site.max_row
+                for i, nm in enumerate(site_staff):
+                    mc = master_col[nm]
+                    src = f"'{ws.title}'!{get_column_letter(mc)}{rr}"
+                    ws_site.cell(site_rr, 3+i).value = f"={src}"
+
+            # Styling: borders + fills (fills won't compute until Excel opens; apply conditional formatting instead)
+            from openpyxl.formatting.rule import Rule
+            from openpyxl.styles.differential import DifferentialStyle
+
+            data_range = f"{get_column_letter(3)}2:{get_column_letter(ws_site.max_column)}{ws_site.max_row}"
+            for task, color in ROLE_COLORS.items():
+                if not task:
+                    continue
+                dxf = DifferentialStyle(fill=PatternFill("solid", fgColor=color))
+                # Relative formula: SEARCH("task",C2)
+                rule = Rule(type="expression", dxf=dxf, formula=[f'ISNUMBER(SEARCH("{task}",C2))'])
+                ws_site.conditional_formatting.add(data_range, rule)
+
+            for rr in range(2, ws_site.max_row+1):
+                tval = str(ws_site.cell(rr,2).value or "")
+                day_start = is_day_start(tval)
+                day_end = is_day_end(tval)
+                for cc in range(1, ws_site.max_column+1):
+                    cell = ws_site.cell(rr,cc)
+                    b = CELL_BORDER
+                    if day_start:
+                        b = merged_border(b, top=True)
+                    if day_end:
+                        b = merged_border(b, bottom=True)
+                    cell.border = b
+                    if cc >= 3:
+                        cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        for site in ("SLGP","JEN","BGS"):
+            make_site_timeline(site)
+
+        # ----------------------------
+        # 3) Coverage_By_Slot (names)
+        # ----------------------------
+        ws_cov = wb.create_sheet(f"Week{w+1}_Coverage_By_Slot")
+        ws_cov.append(["Date","Time"] + COVER_TASKS)
+        for c in ws_cov[1]:
+            c.font = Font(bold=True)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        ws_cov.freeze_panes = "C2"
+
+        ws_cov.column_dimensions["A"].width = DATE_W
+        ws_cov.column_dimensions["B"].width = TIME_W
+        for i in range(len(COVER_TASKS)):
+            ws_cov.column_dimensions[get_column_letter(3+i)].width = 26
+
+        for d in dates:
+            for t in slots:
+                row = [d.strftime("%a %d-%b"), t.strftime("%H:%M")]
+                for task in COVER_TASKS:
+                    names = [nm for nm in staff_names if a.get((d,t,nm)) == task]
+                    row.append(", ".join(names))
+                ws_cov.append(row)
+
+        for rr in range(2, ws_cov.max_row+1):
+            tval = str(ws_cov.cell(rr,2).value or "")
+            day_start = is_day_start(tval)
+            day_end = is_day_end(tval)
+            for cc in range(1, ws_cov.max_column+1):
+                cell = ws_cov.cell(rr,cc)
+                b = CELL_BORDER
+                if day_start:
+                    b = merged_border(b, top=True)
+                if day_end:
+                    b = merged_border(b, bottom=True)
+                cell.border = b
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        # ----------------------------
+        # 4) Totals
+        # ----------------------------
+        ws_tot = wb.create_sheet(f"Week{w+1}_Totals")
+        tasks_tot = [
+            "FrontDesk_SLGP","FrontDesk_JEN","FrontDesk_BGS",
+            "Triage_Admin_SLGP","Triage_Admin_JEN","Email_Box",
+            "Phones","Awaiting_PSA_Admin","Bookings","EMIS","Docman",
+            "Misc_Tasks","Break"
+        ]
+        ws_tot.append(["Name"] + tasks_tot + ["WeeklyTotalHours"])
+        for c in ws_tot[1]:
+            c.font = Font(bold=True)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        ws_tot.freeze_panes = "B2"
+        ws_tot.column_dimensions["A"].width = 22
+        for i in range(len(tasks_tot)):
+            ws_tot.column_dimensions[get_column_letter(2+i)].width = 14
+
+        hours = {(nm, task): 0.0 for nm in staff_names for task in tasks_tot}
+        for d in dates:
+            for t in slots:
+                for nm in staff_names:
+                    task = a.get((d,t,nm))
+                    if task:
+                        hours[(nm, task)] = hours.get((nm, task), 0.0) + 0.5
+                for nm in breaks.get((d,t), set()):
+                    hours[(nm, "Break")] = hours.get((nm, "Break"), 0.0) + 0.5
+
+        for nm in staff_names:
+            row = [nm]
+            total = 0.0
+            for task in tasks_tot:
+                v = round(hours.get((nm, task), 0.0), 2)
+                row.append(v)
+                total += v
+            row.append(round(total, 2))
+            ws_tot.append(row)
+
+        # ----------------------------
+        # 5) Coverage Dashboard
+        # ----------------------------
+        ws_dash = wb.create_sheet(f"Week{w+1}_Coverage_Dashboard")
+        ws_dash.column_dimensions["A"].width = 44
+        ws_dash.column_dimensions["B"].width = 14
+        ws_dash.column_dimensions["C"].width = 14
+        ws_dash.column_dimensions["D"].width = 10
+
+        ws_dash["A1"] = "Coverage Dashboard"
+        ws_dash["A1"].font = Font(bold=True, size=14)
+
+        total_slots = len(dates) * len(slots)
+
+        phones_ok = 0
+        for d in dates:
+            for t in slots:
+                req = phones_required(tpl, d, t)
+                actual = sum(1 for nm in staff_names if a.get((d,t,nm)) == "Phones")
+                if actual >= req:
+                    phones_ok += 1
+        phones_pct = phones_ok / total_slots if total_slots else 1.0
+
+        fd_ok = 0
+        fd_total = total_slots * 3
+        for d in dates:
+            for t in slots:
+                for site in ("SLGP","JEN","BGS"):
+                    role = f"FrontDesk_{site}"
+                    actual = sum(1 for nm in staff_names if a.get((d,t,nm)) == role)
+                    if actual == 1:
+                        fd_ok += 1
+        fd_pct = fd_ok / fd_total if fd_total else 1.0
+
+        # Break compliance
+        req_break = 0
+        got_break = 0
+        for d in dates:
+            for nm in staff_names:
+                stt, end = shift_window(hours_map, d, nm)
+                if not stt or not end:
+                    continue
+                dur = (dt_of(d, end) - dt_of(d, stt)).total_seconds()/3600.0
+                if dur > BREAK_THRESHOLD_HOURS and staff_by_name[nm].break_required:
+                    req_break += 1
+                    had = any(nm in breaks.get((d, bt), set()) for bt in (time(12,0), time(12,30), time(13,0), time(13,30)))
+                    if had:
+                        got_break += 1
+        break_pct = (got_break/req_break) if req_break else 1.0
+
+        def achieved(task: str) -> float:
+            return round(sum(0.5 for d in dates for t in slots for nm in staff_names if a.get((d,t,nm)) == task), 2)
+
+        book_h = achieved("Bookings")
+        emis_h = achieved("EMIS")
+        doc_h = achieved("Docman")
+
+        book_t = float(tpl.weekly_targets.get("Bookings", 0.0) or 0.0)
+        emis_t = float(tpl.weekly_targets.get("EMIS", 0.0) or 0.0)
+        doc_t = float(tpl.weekly_targets.get("Docman", 0.0) or 0.0)
+
+        ws_dash.append(["Metric","Achieved","Target","%"])
+        for c in ws_dash[2]:
+            c.font = Font(bold=True)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+
+        rows = [
+            ("Front Desk coverage (slots meeting rule)", fd_ok, fd_total, fd_pct),
+            ("Phones coverage (slots meeting requirement)", phones_ok, total_slots, phones_pct),
+            ("Break compliance (staff-days with break)", got_break, req_break, break_pct),
+            ("Bookings hours", book_h, book_t, (book_h/book_t if book_t else 1.0)),
+            ("EMIS hours", emis_h, emis_t, (emis_h/emis_t if emis_t else 1.0)),
+            ("Docman hours", doc_h, doc_t, (doc_h/doc_t if doc_t else 1.0)),
+        ]
+        for r in rows:
+            ws_dash.append([r[0], r[1], r[2], round(float(r[3]), 3)])
+
+        # Data bars for %
+        last_row = ws_dash.max_row
+        ws_dash.conditional_formatting.add(f"D3:D{last_row}", DataBarRule(start_type="num", start_value=0, end_type="num", end_value=1, color="63C384"))
+
+        for rr in range(2, ws_dash.max_row+1):
+            for cc in range(1, 5):
+                ws_dash.cell(rr, cc).border = CELL_BORDER
+                ws_dash.cell(rr, cc).alignment = Alignment(vertical="center")
+
+        # ----------------------------
+        # 6) Notes/Gaps
+        # ----------------------------
         ws_g = wb.create_sheet(f"Week{w+1}_NotesAndGaps")
         ws_g.append(["Date","Time","Task","Note"])
         for c in ws_g[1]:
@@ -1059,43 +1338,9 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
         for d, t, task, note in gaps:
             ws_g.append([d.isoformat(), t.strftime("%H:%M") if t else "", task, note])
 
-        # Totals
-        ws_tot = wb.create_sheet(f"Week{w+1}_Totals")
-        tasks_tot = ["FrontDesk_SLGP","FrontDesk_JEN","FrontDesk_BGS","Triage_Admin_SLGP","Triage_Admin_JEN","Email_Box","Phones","Awaiting_PSA_Admin","Bookings","EMIS","Docman","Misc_Tasks","Break"]
-        ws_tot.append(["Name"] + tasks_tot + ["WeeklyTotalHours"])
-        for c in ws_tot[1]:
-            c.font = Font(bold=True)
-            c.alignment = Alignment(horizontal="center", vertical="center")
-
-        header_map = {ws.cell(1,c).value: c for c in range(1, ws.max_column+1)}
-
-        for r_i, nm in enumerate(staff_names, start=2):
-            ws_tot.cell(r_i,1).value = nm
-            mc = header_map.get(nm)
-            col_letter = ws.cell(1, mc).column_letter
-            rng = f"'{ws.title}'!{col_letter}2:{col_letter}{ws.max_row}"
-            for j, task in enumerate(tasks_tot, start=2):
-                ws_tot.cell(r_i,j).value = f'=COUNTIF({rng},"{task}")*0.5'
-            start = ws_tot.cell(r_i,2).coordinate
-            end = ws_tot.cell(r_i,1+len(tasks_tot)).coordinate
-            ws_tot.cell(r_i,2+len(tasks_tot)).value = f"=SUM({start}:{end})"
-
-        ws_tot.append([])
-        ws_tot.append(["Weekly Targets (hours)",
-                       "Bookings", tpl.weekly_targets.get("Bookings",0.0),
-                       "EMIS", tpl.weekly_targets.get("EMIS",0.0),
-                       "Docman", tpl.weekly_targets.get("Docman",0.0)])
-        ws_tot["A"+str(ws_tot.max_row)].font = Font(bold=True)
-
     return wb
 
-# ===========================
-# Presentation Enhancements
-# ===========================
-from openpyxl.styles import Border, Side
-from openpyxl.formatting.rule import DataBarRule
 
-THICK = Side(style="thick")
 
 def apply_day_borders(ws):
     # Thick border between days (every 48 rows for 30-min slots * 24 hours approx 48 slots)
