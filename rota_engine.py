@@ -1473,8 +1473,7 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
                 ws_cov.append(row)
 
         # Colour coverage columns by meaning
-        from openpyxl.styles import PatternFill
-        col_fills = {
+                col_fills = {
             "FD_": PatternFill("solid", fgColor=ROLE_COLORS.get("FrontDesk_SLGP","FFF2CC")),
             "Triage_": PatternFill("solid", fgColor=ROLE_COLORS.get("Triage_Admin_SLGP","D9EAD3")),
             "Phones": PatternFill("solid", fgColor=ROLE_COLORS.get("Phones","C9DAF8")),
