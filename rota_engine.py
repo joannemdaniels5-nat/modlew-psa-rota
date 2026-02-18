@@ -1,5 +1,4 @@
-
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 import io
 import re
 from dataclasses import dataclass
@@ -10,7 +9,6 @@ import math
 
 import pandas as pd
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # =========================================================
