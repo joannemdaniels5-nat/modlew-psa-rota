@@ -802,18 +802,79 @@ def schedule_week(tpl: TemplateData, week_start: date):
         ppl_pressure = math.ceil(remaining / (rem_slots * SLOT_MIN))
         return max(base, ppl_pressure)
 
-    def enforce(task: str, need: int, d: date, idx: int, allow_cross_site: bool=False, prefer_sites: Optional[List[str]]=None):
+    def _set_assignment(d: date, t: time, nm: str, new_task: str):
+        """Overwrite (d,t,nm) assignment safely, keeping mins_task approximately consistent.
+        Only used for controlled "reclaim" moves (e.g., from Misc/EMIS/Docman -> higher-pressure task).
+        """
+        old = a.get((d,t,nm))
+        if old == new_task:
+            return
+        if old:
+            old_key = task_key_for_task(old)
+            mins_task[(nm, old_key)] = max(0, mins_task.get((nm, old_key), 0) - SLOT_MIN)
+        a[(d,t,nm)] = new_task
+        add_mins(nm, task_key_for_task(new_task), SLOT_MIN)
+
+    def enforce(task: str, need: int, d: date, idx: int, allow_cross_site: bool=False, prefer_sites: Optional[List[str]]=None, reclaim_from: Optional[Set[str]] = None):
+        """Ensure at least `need` staff are on `task` at this slot.
+        If reclaim_from is provided, may reassign staff currently on one of those tasks.
+        """
         t = slots[idx]
+        reclaim_from = reclaim_from or set()
         while True:
             current = len([nm for nm in staff_names if a.get((d,t,nm)) == task])
             if current >= need:
                 return
-            cands = pick_candidates(task, d, t, allow_cross_site=allow_cross_site, prefer_sites=prefer_sites)
-            if not cands:
-                gaps.append((d, t, task, f"Short by {need-current}"))
-                return
-            nm = cands[0]
-            assign_block(nm, task, d, idx)
+
+            # Candidates: free first; then reclaimable assignments
+            free_cands = pick_candidates(task, d, t, allow_cross_site=allow_cross_site, prefer_sites=prefer_sites)
+            if free_cands:
+                nm = free_cands[0]
+                assign_block(nm, task, d, idx)
+                continue
+
+            if reclaim_from:
+                reclaimable = []
+                for nm in staff_names:
+                    cur = a.get((d,t,nm))
+                    if cur not in reclaim_from:
+                        continue
+                    if not eligible(nm, task, d, t, allow_cross_site=allow_cross_site):
+                        continue
+                    reclaimable.append(nm)
+                if reclaimable:
+                    key = task_key_for_task(task)
+                    reclaimable = sorted(reclaimable, key=lambda nm: (-task_weight(staff_by_name[nm], key), mins_task.get((nm, key), 0), nm.lower()))
+                    nm = reclaimable[0]
+                    stop_block(nm, d)
+                    _set_assignment(d, t, nm, task)
+                    continue
+
+            gaps.append((d, t, task, f"Short by {need-current}"))
+            return
+
+    def pressure_needed(task_key: str, target_mins: int, done_mins: int, d: date, idx: int, window_start: time = DAY_START) -> int:
+        """How many people should we schedule *this slot* for a weekly-hours target.
+        This is a soft pressure (ceil of remaining / remaining slots).
+        """
+        if target_mins <= 0:
+            return 0
+        remaining = max(0, target_mins - done_mins)
+        if remaining <= 0:
+            return 0
+        t = slots[idx]
+        rem_slots = 0
+        for dd in dates:
+            for tt in slots:
+                if dd < d:
+                    continue
+                if dd == d and tt < t:
+                    continue
+                if tt >= window_start:
+                    rem_slots += 1
+        if rem_slots <= 0:
+            return 0
+        return max(0, math.ceil(remaining / (rem_slots * SLOT_MIN)))
 
     # main loop
     for d in dates:
@@ -828,15 +889,15 @@ def schedule_week(tpl: TemplateData, week_start: date):
 
             # Email 10:30–16:00 (site-of-day, then cross-site if needed)
             if t_in_range(t, time(10,30), time(16,0)):
-                enforce("Email_Box", 1, d, idx, allow_cross_site=False)
+                enforce("Email_Box", 1, d, idx, allow_cross_site=False, reclaim_from={"Misc_Tasks","EMIS","Docman"})
                 if len([nm for nm in staff_names if a.get((d,t,nm)) == "Email_Box"]) < 1:
-                    enforce("Email_Box", 1, d, idx, allow_cross_site=True)
+                    enforce("Email_Box", 1, d, idx, allow_cross_site=True, reclaim_from={"Misc_Tasks","EMIS","Docman"})
 
             # Awaiting 10:00–16:00
             if t_in_range(t, time(10,0), time(16,0)):
-                enforce("Awaiting_PSA_Admin", 1, d, idx, allow_cross_site=False)
+                enforce("Awaiting_PSA_Admin", 1, d, idx, allow_cross_site=False, reclaim_from={"Misc_Tasks","EMIS","Docman"})
                 if len([nm for nm in staff_names if a.get((d,t,nm)) == "Awaiting_PSA_Admin"]) < 1:
-                    enforce("Awaiting_PSA_Admin", 1, d, idx, allow_cross_site=True)
+                    enforce("Awaiting_PSA_Admin", 1, d, idx, allow_cross_site=True, reclaim_from={"Misc_Tasks","EMIS","Docman"})
 
             # Phones per hourly matrix (hard)
             req_p = phones_required(tpl, d, t)
@@ -850,55 +911,78 @@ def schedule_week(tpl: TemplateData, week_start: date):
                 if len([nm for nm in staff_names if a.get((d,t,nm)) == "Bookings"]) < req_b:
                     enforce("Bookings", req_b, d, idx, allow_cross_site=True)
 
-            # Fill remaining staff with Docman/EMIS until weekly targets met, prefer JEN/BGS
+        # Docman/EMIS weekly targets (soft): allocate as close as possible to targets.
+        # Strategy:
+        #  - Calculate "pressure" (people needed this slot) for each task based on remaining minutes / remaining slots
+        #  - Enforce the higher-pressure task first, allowing reclaim from Misc/other admin tasks
+        #  - Fill any remaining free staff to the more-behind task (site preference JEN/BGS first; SLGP last)
+
+        emis_done = total_mins("EMIS")
+        doc_done  = total_mins("Docman")
+
+        doc_need  = pressure_needed("Docman", target_doc, doc_done, d, idx)
+        emis_need = pressure_needed("EMIS",   target_emis, emis_done, d, idx)
+
+        # Decide which is more behind (ratio remaining/target)
+        doc_ratio  = (max(0, target_doc - doc_done) / target_doc) if target_doc else 0.0
+        emis_ratio = (max(0, target_emis - emis_done) / target_emis) if target_emis else 0.0
+
+        # Enforce in descending ratio order; allow reclaim from Misc and the other task (but never from Phones/Bookings/etc.)
+        reclaim_low = {"Misc_Tasks"}
+        if doc_ratio >= emis_ratio:
+            if doc_need > 0:
+                enforce("Docman", doc_need, d, idx, allow_cross_site=True, prefer_sites=["JEN","BGS"], reclaim_from=reclaim_low | {"EMIS"})
+            if emis_need > 0:
+                enforce("EMIS", emis_need, d, idx, allow_cross_site=True, prefer_sites=["JEN","BGS"], reclaim_from=reclaim_low | {"Docman"})
+        else:
+            if emis_need > 0:
+                enforce("EMIS", emis_need, d, idx, allow_cross_site=True, prefer_sites=["JEN","BGS"], reclaim_from=reclaim_low | {"Docman"})
+            if doc_need > 0:
+                enforce("Docman", doc_need, d, idx, allow_cross_site=True, prefer_sites=["JEN","BGS"], reclaim_from=reclaim_low | {"EMIS"})
+
+        # Fill remaining free staff with the more-behind of Docman/EMIS, otherwise Misc.
+        for nm in staff_names:
+            if not is_working(hours_map, d, t, nm):
+                continue
+            if holiday_kind(nm, d, tpl.hols):
+                continue
+            if on_break(nm, d, t):
+                continue
+            if not is_free(nm, d, t):
+                continue
+
+            # Choose task based on current remaining ratios, updated live
             emis_done = total_mins("EMIS")
             doc_done  = total_mins("Docman")
+            doc_rem = max(0, target_doc - doc_done)
+            emis_rem = max(0, target_emis - emis_done)
 
-            filler_tasks = []
-            if target_doc > 0 and doc_done < target_doc:
-                filler_tasks.append("Docman")
-            if target_emis > 0 and emis_done < target_emis:
-                filler_tasks.append("EMIS")
-            if not filler_tasks:
-                filler_tasks = ["Misc_Tasks"]
+            chosen = "Misc_Tasks"
+            if doc_rem > 0 or emis_rem > 0:
+                # prefer the more-behind ratio; tie -> Docman first (min 3h blocks)
+                doc_ratio  = (doc_rem / target_doc) if target_doc else 0.0
+                emis_ratio = (emis_rem / target_emis) if target_emis else 0.0
+                chosen = "Docman" if doc_ratio >= emis_ratio else "EMIS"
 
-            for nm in staff_names:
-                if not is_working(hours_map, d, t, nm):
-                    continue
-                if holiday_kind(nm, d, tpl.hols):
-                    continue
-                if on_break(nm, d, t):
-                    continue
-                if not is_free(nm, d, t):
-                    continue
-
-                chosen = None
-                for ft in filler_tasks:
-                    if eligible(nm, ft, d, t, allow_cross_site=True):
-                        chosen = ft
+            # Site preference: keep SLGP off EMIS/Docman if any JEN/BGS free + eligible
+            if chosen in ("EMIS","Docman") and staff_by_name[nm].home == "SLGP":
+                any_other = False
+                for other in staff_names:
+                    if other == nm:
+                        continue
+                    if staff_by_name[other].home not in ("JEN","BGS"):
+                        continue
+                    if not is_free(other, d, t):
+                        continue
+                    if eligible(other, chosen, d, t, allow_cross_site=True):
+                        any_other = True
                         break
-                if not chosen:
+                if any_other:
                     chosen = "Misc_Tasks"
 
-                # Prefer JEN/BGS for EMIS/Docman where possible
-                if chosen in ("EMIS","Docman") and staff_by_name[nm].home == "SLGP":
-                    any_other = False
-                    for other in staff_names:
-                        if other == nm:
-                            continue
-                        if staff_by_name[other].home not in ("JEN","BGS"):
-                            continue
-                        if not is_free(other, d, t):
-                            continue
-                        if eligible(other, chosen, d, t, allow_cross_site=True):
-                            any_other = True
-                            break
-                    if any_other:
-                        chosen = "Misc_Tasks"
+            assign_block(nm, chosen, d, idx)
 
-                assign_block(nm, chosen, d, idx)
-
-    # Smooth any single-slot fragments (non-fixed)
+# Smooth any single-slot fragments (non-fixed)
     def smooth_single_slot_blocks():
         FIXED_PREFIXES = ("FrontDesk_", "Triage_Admin_")
         SPECIAL = ("Break", "Holiday", "Bank Holiday", "Sick")
