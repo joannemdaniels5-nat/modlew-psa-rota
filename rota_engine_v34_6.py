@@ -953,81 +953,52 @@ def schedule_week(tpl: TemplateData, wk_start: date):
 
 
 
-            # Mandatory: Email (10:30-16) — SOFT site preference, MUST be covered (no job-hopping)
-            if t_in_range(t, time(10,30), time(16,0)):
+            # ---------------- Email Fixed Shift (10:30–16:00) ----------------
+            if t == time(10,30):
 
                 pref_site = email_site_for_day(d)
 
-                def email_score(nm: str):
+                candidates = []
+                for nm in staff_names:
                     st = staff_by_name[nm]
-                    w = task_weight(st, "Email")
-                    used = mins_task.get((nm, "Email"), 0)
-                    pref = 0 if st.home == pref_site else 1
-                    return (pref, -w, used, nm.lower())
+                    if not st.can_email:
+                        continue
+                    if holiday_kind(nm, d, tpl.hols):
+                        continue
 
-                def can_do_email(nm: str) -> bool:
-                    st = staff_by_name[nm]
-                    return (
-                        st.can_email
-                        and (not holiday_kind(nm, d, tpl.hols))
-                        and is_working(hours_map, d, t, nm)
-                        and (not on_break(nm, d, t))
-                        and (d, t, nm) not in fixed_slots
-                    )
+                    stt, endt = shift_window(hours_map, d, nm)
+                    if not stt or not endt:
+                        continue
+                    if not (stt <= time(10,30) and endt >= time(16,0)):
+                        continue
 
-                # De-dup: keep best if multiple
-                current = [nm for nm in staff_names if a.get((d, t, nm)) == "Email_Box"]
-                if len(current) > 1:
-                    current.sort(key=email_score)
-                    keep = current[0]
-                    for extra in current[1:]:
-                        del a[(d, t, extra)]
-                    current = [keep]
+                    candidates.append(nm)
 
-                if len(current) == 1:
-                    email_last = current[0]
-                else:
-                    # Prefer continuity
-                    if email_last and can_do_email(email_last) and is_free(email_last, d, t):
-                        chosen = email_last
-                    else:
-                        # Free candidates first
-                        free_cands = [nm for nm in staff_names if is_free(nm, d, t) and can_do_email(nm)]
-                        free_cands.sort(key=email_score)
-                        chosen = free_cands[0] if free_cands else None
+                if candidates:
 
-                        # If none free, steal from lower priority (not FD/Triage)
-                        if not chosen:
-                            steal_cands = [
-                                nm for nm in staff_names
-                                if can_do_email(nm) and (d, t, nm) in a
-                                and not str(a.get((d, t, nm), "")).startswith(("FrontDesk_", "Triage_Admin_"))
-                            ]
-                            steal_cands.sort(key=email_score)
-                            chosen = steal_cands[0] if steal_cands else None
+                    def email_score(nm):
+                        st = staff_by_name[nm]
+                        pref = 0 if st.home == pref_site else 1
+                        w = task_weight(st, "Email")
+                        used = mins_task.get((nm, "Email"), 0)
+                        return (pref, -w, used, nm.lower())
 
-                        # Absolute fallback: keep service covered even if not email-skilled
-                        if not chosen:
-                            fallback = [
-                                nm for nm in staff_names
-                                if (not holiday_kind(nm, d, tpl.hols))
-                                and is_working(hours_map, d, t, nm)
-                                and (not on_break(nm, d, t))
-                                and (d, t, nm) not in fixed_slots
-                                and not str(a.get((d, t, nm), "")).startswith(("FrontDesk_", "Triage_Admin_"))
-                            ]
-                            # prefer free then least-used
-                            fallback.sort(key=lambda nm: (0 if is_free(nm, d, t) else 1, 0, nm.lower()))
-                            chosen = fallback[0] if fallback else None
-                            if chosen:
-                                gaps.append((d, t, "Email_Box", f"Covered by non-email-skilled staff: {chosen}"))
+                    candidates.sort(key=email_score)
+                    chosen = candidates[0]
 
-                    if chosen:
-                        a[(d, t, chosen)] = "Email_Box"
+                    for future_t in slots:
+                        if not t_in_range(future_t, time(10,30), time(16,0)):
+                            continue
+                        if not is_working(hours_map, d, future_t, chosen):
+                            continue
+                        if chosen in breaks.get((d, future_t), set()):
+                            continue
+                        if (d, future_t, chosen) in fixed_slots:
+                            continue
+
+                        a[(d, future_t, chosen)] = "Email_Box"
                         add_mins(d, chosen, "Email", SLOT_MIN)
-                        email_last = chosen
-                    else:
-                        gaps.append((d, t, "Email_Box", "No suitable staff for Email slot"))
+                 
 
             # Mandatory: Awaiting_PSA_Admin (10:30-16) — MUST be covered (no job-hopping)
             if t_in_range(t, time(10,30), time(16,0)):
