@@ -1645,7 +1645,7 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
                             val = "Break"
                         else:
                             val = a.get((d, t, nm), "")
-                            row.append(val))
+                            row.append(val)
 
         # Apply fills + formatting to site sheets
         for site, ws_site2 in site_sheets.items():
