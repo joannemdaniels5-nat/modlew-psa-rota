@@ -1228,20 +1228,25 @@ def schedule_week(tpl: TemplateData, wk_start: date):
 
     # Safety: ensure nobody who is working (and not on break/holiday) is left blank
     for d in dates:
-        for t in slots:
-            for nm in staff_names:
-                if not is_working(hours_map, d, t, nm):
-                    continue
-                if holiday_kind(nm, d, tpl.hols):
-                    continue
-                if on_break(nm, d, t):
-                    continue
-                if (d, t, nm) not in a:
-                    a[(d, t, nm)] = "Misc_Tasks"
-                    add_mins(d, nm, "Misc", SLOT_MIN)
+    for t in slots:
+        for nm in staff_names:
 
-    smooth_single_slot_blocks()
-    return a, breaks, gaps, dates, slots, hours_map
+            if not is_working(hours_map, d, t, nm):
+                continue
+
+            if holiday_kind(nm, d, tpl.hols):
+                continue
+
+            if nm in breaks.get((d, t), set()):
+                continue
+
+            # If key missing OR empty OR None → fix it
+            val = a.get((d, t, nm))
+
+            if not val:
+                a[(d, t, nm)] = "Misc_Tasks"
+                
+        return a, breaks, gaps, dates, slots, hours_map
 
 # ---------- Excel output ----------
 ROLE_COLORS = {
