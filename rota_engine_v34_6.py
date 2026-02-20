@@ -1198,27 +1198,24 @@ def schedule_week(tpl: TemplateData, wk_start: date):
                     i = j
 
     # Safety: ensure nobody who is working (and not on break/holiday) is left blank
-        for d in dates:
+    for d in dates:
         for t in slots:
-        for nm in staff_names:
+            for nm in staff_names:
 
-            if not is_working(hours_map, d, t, nm):
-                continue
+                if not is_working(hours_map, d, t, nm):
+                    continue
 
-            if holiday_kind(nm, d, tpl.hols):
-                continue
+                if holiday_kind(nm, d, tpl.hols):
+                    continue
 
-            if nm in breaks.get((d, t), set()):
-                continue
+                if nm in breaks.get((d, t), set()):
+                    continue
 
-            # If key missing OR empty OR None → fix it
-            val = a.get((d, t, nm))
+                if not a.get((d, t, nm)):
+                    a[(d, t, nm)] = "Misc_Tasks"
+                    add_mins(d, nm, "Misc", SLOT_MIN)
 
-            if not val:
-                a[(d, t, nm)] = "Misc_Tasks"
-                
-        return a, breaks, gaps, dates, slots, hours_map
-
+    return a, breaks, gaps, dates, slots, hours_map
 # ---------- Excel output ----------
 ROLE_COLORS = {
     "FrontDesk_SLGP": "FFF2CC",
