@@ -1198,8 +1198,8 @@ def schedule_week(tpl: TemplateData, wk_start: date):
                     i = j
 
     # Safety: ensure nobody who is working (and not on break/holiday) is left blank
-    for d in dates:
-    for t in slots:
+        for d in dates:
+        for t in slots:
         for nm in staff_names:
 
             if not is_working(hours_map, d, t, nm):
