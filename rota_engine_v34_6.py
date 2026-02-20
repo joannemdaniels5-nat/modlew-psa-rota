@@ -1644,10 +1644,8 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
                         elif nm in breaks.get((d, t), set()):
                             val = "Break"
                         else:
-                            role = a.get((d, t, nm), "Misc_Tasks")
-                            val = role if (staff_by_name[nm].home == site) else ""
-                        row.append(val)
-                    ws_site2.append(row)
+                            val = a.get((d, t, nm), "")
+                            row.append(val))
 
         # Apply fills + formatting to site sheets
         for site, ws_site2 in site_sheets.items():
