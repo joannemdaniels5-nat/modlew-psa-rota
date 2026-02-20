@@ -2197,7 +2197,7 @@ def build_workbook(tpl: TemplateData, start_monday: date, weeks: int) -> Workboo
         # style
         for rr in range(2, ws_cov.max_row+1):
             time_val = str(ws_cov.cell(rr,2).value or "")
-            top_day = (time_val == DAY_START.strftime("%H:%M")
+            top_day = (time_val == DAY_START.strftime("%H:%M"))
             for cc in range(1, ws_cov.max_column+1):
                 cell = ws_cov.cell(rr,cc)
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
