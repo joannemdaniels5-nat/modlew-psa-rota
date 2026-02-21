@@ -1196,32 +1196,33 @@ def schedule_week(tpl: TemplateData, wk_start: date):
                             a[(d, slots[i], nm)] = chosen
                             seq[i] = chosen
                     i = j
+    # FINAL HARD ENFORCEMENT:
+    # No working slot may remain blank.
+    # This runs AFTER all scheduling and corrections.
+    # --------------------------------------------------
+    for d in dates:
+        for t in slots:
+            for nm in staff_names:
 
-# FINAL HARD ENFORCEMENT:
-# No working slot may remain blank.
-# This runs AFTER all scheduling and corrections.
-# --------------------------------------------------
-for d in dates:
-    for t in slots:
-        for nm in staff_names:
+                # Must be working
+                if not is_working(hours_map, d, t, nm):
+                    continue
 
-            # Must be working
-            if not is_working(hours_map, d, t, nm):
-                continue
+                # Skip holiday
+                if holiday_kind(nm, d, tpl.hols):
+                    continue
 
-            # Skip holiday
-            if holiday_kind(nm, d, tpl.hols):
-                continue
+                # Skip break
+                if nm in breaks.get((d, t), set()):
+                    continue
 
-            # Skip break
-            if nm in breaks.get((d, t), set()):
-                continue
+                # If NOTHING assigned, force Misc
+                if not a.get((d, t, nm)):
+                    a[(d, t, nm)] = "Misc_Tasks"
+                    add_mins(d, nm, "Misc", SLOT_MIN)
 
-            # If NOTHING assigned, force Misc
-            if not a.get((d, t, nm)):
-                a[(d, t, nm)] = "Misc_Tasks"
-                add_mins(d, nm, "Misc", SLOT_MIN)
-    return a, breaks, gaps, dates, slots, hours_map                
+    return a, breaks, gaps, dates, slots, hours_map
+             
 # ---------- Excel output ----------
 ROLE_COLORS = {
     "FrontDesk_SLGP": "FFF2CC",
