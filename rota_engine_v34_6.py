@@ -1221,6 +1221,7 @@ for d in dates:
             if not a.get((d, t, nm)):
                 a[(d, t, nm)] = "Misc_Tasks"
                 add_mins(d, nm, "Misc", SLOT_MIN)
+    return a, breaks, gaps, dates, slots, hours_map                
 # ---------- Excel output ----------
 ROLE_COLORS = {
     "FrontDesk_SLGP": "FFF2CC",
