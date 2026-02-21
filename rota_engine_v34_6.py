@@ -2083,16 +2083,29 @@ def _write_coverage_sheet_from_site_timelines(wb, week_num: int):
             row.append(", ".join(per_task[k]))
         ws_cov.append(row)
 
-    # simple styling
+    # simple styling + colouring
     for rr in range(2, ws_cov.max_row+1):
         time_val = str(ws_cov.cell(rr,2).value or "")
         top_day = (time_val == DAY_START.strftime("%H:%M"))
+
         for cc in range(1, ws_cov.max_column+1):
             cell = ws_cov.cell(rr,cc)
             cell.alignment = Alignment(vertical="top", wrap_text=True)
-            cell.border = Border(top=THICK_SIDE if top_day else THIN_SIDE, bottom=THIN_SIDE, left=THIN_SIDE, right=THIN_SIDE)
-    return ws_cov
+            cell.border = Border(
+                top=THICK_SIDE if top_day else THIN_SIDE,
+                bottom=THIN_SIDE,
+                left=THIN_SIDE,
+                right=THIN_SIDE
+            )
 
+    # Apply background colours to task columns
+    for cc in range(3, ws_cov.max_column+1):
+        task = str(ws_cov.cell(1, cc).value or "")
+        fill = PatternFill("solid", fgColor=ROLE_COLORS.get(task, "FFFFFF"))
+        for rr in range(2, ws_cov.max_row+1):
+            ws_cov.cell(rr, cc).fill = fill
+
+    return ws_cov
 def recalc_workbook_from_site_timelines(xlsx_bytes: bytes) -> bytes:
     """Recalculate Coverage + Totals from edited site timelines. Returns updated workbook bytes."""
     wb = load_workbook(io.BytesIO(xlsx_bytes))
