@@ -2113,7 +2113,7 @@ def _write_coverage_sheet_from_site_timelines(wb, week_num: int):
         for rr in range(2, ws_cov.max_row + 1):
             ws_cov.cell(rr, cc).fill = f
 
-return ws_cov
+    return ws_cov
 
 def recalc_workbook_from_site_timelines(xlsx_bytes: bytes) -> bytes:
     """Recalculate Coverage + Totals from edited site timelines. Returns updated workbook bytes."""
