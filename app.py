@@ -5,7 +5,7 @@ import streamlit as st
 from datetime import date
 import io
 
-from rota_engine_v37_fast import (
+from rota_engine_v37_3 import (
     read_template,
     build_workbook,
     ensure_monday,
@@ -13,7 +13,7 @@ from rota_engine_v37_fast import (
 )
 
 st.set_page_config(page_title="ModLew PSA Rota Generator", page_icon="📅")
-st.title("ModLew PSA Rota Generator v37")
+st.title("ModLew PSA Rota Generator v37.3")
 
 tab1, tab2 = st.tabs(["Generate rota", "Recalculate from edited timelines"])
 
