@@ -5,7 +5,7 @@ import streamlit as st
 from datetime import date
 import io
 
-from rota_engine_v37_5 import read_template, build_workbook, ensure_monday, recalc_workbook_from_site_timelines
+from rota_engine_v37_6 import read_template, build_workbook, ensure_monday, recalc_workbook_from_site_timelines
 
 st.set_page_config(page_title="ModLew PSA Rota Generator", page_icon="🗓️", layout="wide")
 st.title("ModLew PSA Rota Generator")
@@ -49,5 +49,3 @@ if st.button("Recalculate workbook", disabled=(uploaded2 is None)):
         )
     except Exception as e:
         st.exception(e)
-
-
